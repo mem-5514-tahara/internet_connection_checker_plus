@@ -83,6 +83,9 @@ class InternetConnection {
   /// checking endpoint reachability. If provided, it will be used for all
   /// connectivity checks instead of the default HTTP HEAD request
   /// implementation.
+  ///
+  /// Make sure to call [dispose] when this instance is no longer needed to free
+  /// up resources.
   InternetConnection.createInstance({
     Duration? checkInterval,
     List<InternetCheckOption>? customCheckOptions,
@@ -179,6 +182,11 @@ class InternetConnection {
 
   /// The singleton instance of [InternetConnection].
   static final _instance = InternetConnection.createInstance();
+
+  /// The HTTP client used for making network requests.
+  /// Reusing this client might prevent unnecessary TCP/TLS handshakes on every
+  /// check.
+  late final _httpClient = http.Client();
 
   /// The duration between consecutive status checks.
   ///
@@ -285,7 +293,7 @@ class InternetConnection {
         return customConnectivityCheck!.call(option);
       }
 
-      final response = await http
+      final response = await _httpClient
           .head(option.uri, headers: option.headers)
           .timeout(option.timeout);
 
@@ -435,11 +443,8 @@ class InternetConnection {
   /// Handles cancellation of status change events.
   ///
   /// Cancels the timer and resets the last status.
-  void _handleStatusChangeCancel() {
-    // Not awaited: _handleStatusChangeCancel is a synchronous onCancel
-    // callback.  Any event that fires before cancel propagates will see
-    // hasListener == false and return early from _maybeEmitStatusUpdate.
-    _triggerSubscription?.cancel();
+  Future<void> _handleStatusChangeCancel() async {
+    await _triggerSubscription?.cancel();
     _triggerSubscription = null;
     _cancelGeneration++;
     _generation++;
@@ -473,5 +478,21 @@ class InternetConnection {
       (_) => _maybeEmitStatusUpdate(),
       onError: (_, __) {},
     );
+  }
+
+  /// Disposes of the resources used by this instance.
+  ///
+  /// This method should be called when the instance created by
+  /// [InternetConnection.createInstance] is no longer needed to free up
+  /// resources.
+  ///
+  /// ### Important:
+  /// Do not call this method on the singleton instance. Calling this method on
+  /// the singleton instance will affect all parts of the application that rely
+  /// on it. Use with caution.
+  Future<void> dispose() async {
+    await _handleStatusChangeCancel();
+    await _statusController.close();
+    _httpClient.close();
   }
 }
