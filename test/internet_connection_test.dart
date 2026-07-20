@@ -401,6 +401,56 @@ void main() {
             throwsA(isA<ArgumentError>()),
           );
         });
+
+        // NaN and Infinity both fail `< 1.0` (IEEE-754 comparisons involving
+        // NaN are always false), so a naive lower-bound check alone would let
+        // them through the constructor only to crash later when `.round()` is
+        // called on the grown delay during an ongoing failure.
+        test('throws when backoffMultiplier is NaN', () {
+          expect(
+            () => InternetConnection.createInstance(
+              useExponentialBackoff: true,
+              useDefaultOptions: false,
+              customCheckOptions: singleOption,
+              backoffMultiplier: double.nan,
+            ),
+            throwsA(isA<ArgumentError>()),
+          );
+        });
+
+        test('throws when backoffMultiplier is Infinity', () {
+          expect(
+            () => InternetConnection.createInstance(
+              useExponentialBackoff: true,
+              useDefaultOptions: false,
+              customCheckOptions: singleOption,
+              backoffMultiplier: double.infinity,
+            ),
+            throwsA(isA<ArgumentError>()),
+          );
+        });
+      });
+
+      test('exposes the effective backoff configuration via public getters',
+          () async {
+        final checker = InternetConnection.createInstance(
+          checkInterval: const Duration(seconds: 10),
+          useDefaultOptions: false,
+          customCheckOptions: [
+            InternetCheckOption(uri: Uri.parse('https://example.com')),
+          ],
+          useExponentialBackoff: true,
+          backoffMaxDelay: const Duration(seconds: 30),
+          backoffMultiplier: 3.0,
+        );
+        addTearDown(checker.dispose);
+
+        // backoffInitialDelay was omitted, so it should track checkInterval.
+        expect(checker.backoffInitialDelay, const Duration(seconds: 10));
+        expect(checker.backoffMaxDelay, const Duration(seconds: 30));
+        expect(checker.backoffMultiplier, 3.0);
+        // Before any failure, the live delay equals the initial delay.
+        expect(checker.currentBackoffDelay, const Duration(seconds: 10));
       });
 
       test('disabled by default: interval stays constant under failures',

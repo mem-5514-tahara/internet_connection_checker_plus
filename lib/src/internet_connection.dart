@@ -84,6 +84,27 @@ class InternetConnection {
   /// connectivity checks instead of the default HTTP HEAD request
   /// implementation.
   ///
+  /// The [useExponentialBackoff] flag enables exponential backoff for the
+  /// polling interval used by [onStatusChange]. Defaults to `false`, which
+  /// preserves the existing fixed-[checkInterval] polling behaviour exactly.
+  /// When `true`:
+  /// - [backoffInitialDelay] is the delay applied after the first detected
+  ///   failure. If omitted, it defaults to (and tracks) [checkInterval],
+  ///   including through [setIntervalAndResetTimer] calls that don't specify
+  ///   an explicit [backoffInitialDelay].
+  /// - [backoffMaxDelay] caps how large the delay may grow. Defaults to 60
+  ///   seconds.
+  /// - [backoffMultiplier] is the factor applied to the delay on each
+  ///   consecutive failure. Defaults to `2.0`.
+  /// - The delay resets to [checkInterval] as soon as the connection is
+  ///   restored, and resets to [backoffInitialDelay] whenever
+  ///   [setIntervalAndResetTimer] is called or the last listener cancels.
+  ///
+  /// An [ArgumentError] is thrown if [useExponentialBackoff] is `true` and
+  /// [backoffMultiplier] is not a finite number `>= 1.0`, or if
+  /// [backoffMaxDelay] or the effective [backoffInitialDelay] is not a
+  /// positive [Duration] no greater than [backoffMaxDelay].
+  ///
   /// Make sure to call [dispose] when this instance is no longer needed to free
   /// up resources.
   InternetConnection.createInstance({
@@ -112,11 +133,12 @@ class InternetConnection {
       );
     }
     if (useExponentialBackoff) {
-      if (backoffMultiplier < 1.0) {
+      if (!backoffMultiplier.isFinite || backoffMultiplier < 1.0) {
         throw ArgumentError.value(
           backoffMultiplier,
           'backoffMultiplier',
-          'Must be >= 1.0 to prevent shrinking intervals.',
+          'Must be a finite number >= 1.0 to prevent shrinking or invalid '
+              'intervals.',
         );
       }
       if (backoffMaxDelay <= Duration.zero) {
@@ -328,6 +350,29 @@ class InternetConnection {
 
   /// Returns the current duration between connection checks.
   Duration get checkInterval => _checkInterval;
+
+  /// Returns the delay applied after the first detected failure when
+  /// [useExponentialBackoff] is enabled.
+  ///
+  /// If no explicit value was provided at construction time, this tracks
+  /// [checkInterval], including through [setIntervalAndResetTimer] calls.
+  Duration get backoffInitialDelay => _backoffInitialDelay;
+
+  /// Returns the configured upper bound on the backoff delay when
+  /// [useExponentialBackoff] is enabled.
+  Duration get backoffMaxDelay => _backoffMaxDelay;
+
+  /// Returns the configured multiplicative factor applied to the delay on
+  /// each consecutive failure when [useExponentialBackoff] is enabled.
+  double get backoffMultiplier => _backoffMultiplier;
+
+  /// Returns the delay that will be used before the next poll when
+  /// [useExponentialBackoff] is enabled.
+  ///
+  /// Useful for surfacing "retrying in Xs" style UI. Resets to
+  /// [backoffInitialDelay] on reconnect, on [setIntervalAndResetTimer], and
+  /// when the last listener cancels.
+  Duration get currentBackoffDelay => _currentBackoffDelay;
 
   /// Checks if there is internet access by verifying connectivity to the
   /// specified [Uri]s.
