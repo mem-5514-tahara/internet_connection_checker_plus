@@ -304,6 +304,8 @@ void main() {
 
         await sub1.cancel();
         await sub2.cancel();
+
+        await checker.dispose();
       });
     });
 
@@ -320,7 +322,7 @@ void main() {
       }) {
         final option =
             InternetCheckOption(uri: Uri.parse('https://example.com'));
-        return InternetConnection.createInstance(
+        final checker = InternetConnection.createInstance(
           checkInterval: checkInterval,
           useDefaultOptions: false,
           customCheckOptions: [option],
@@ -333,6 +335,8 @@ void main() {
             return InternetCheckResult(option: opt, isSuccess: shouldSucceed());
           },
         );
+        addTearDown(checker.dispose);
+        return checker;
       }
 
       group('constructor validation', () {

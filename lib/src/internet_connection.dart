@@ -77,7 +77,7 @@ class InternetConnection {
   /// used along with any [customCheckOptions] provided.
   ///
   /// - If [useDefaultOptions] is `false`, you must provide a non-empty
-  /// [customCheckOptions] list.
+  /// [customCheckOptions] list, otherwise an [ArgumentError] is thrown.
   ///
   /// The [customConnectivityCheck] allows you to provide a custom method for
   /// checking endpoint reachability. If provided, it will be used for all
@@ -104,12 +104,13 @@ class InternetConnection {
         _backoffMaxDelay = backoffMaxDelay,
         _backoffMultiplier = backoffMultiplier,
         _currentBackoffDelay =
-            _resolveInitialDelay(backoffInitialDelay, checkInterval),
-        assert(
-          useDefaultOptions || customCheckOptions?.isNotEmpty == true,
-          'You must provide a list of options if you are not using the '
-          'default ones.',
-        ) {
+            _resolveInitialDelay(backoffInitialDelay, checkInterval) {
+    if (!useDefaultOptions && customCheckOptions?.isNotEmpty != true) {
+      throw ArgumentError(
+        'You must provide a list of options if you are not using the '
+        'default ones.',
+      );
+    }
     if (useExponentialBackoff) {
       if (backoffMultiplier < 1.0) {
         throw ArgumentError.value(
