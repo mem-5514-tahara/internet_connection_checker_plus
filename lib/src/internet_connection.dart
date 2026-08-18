@@ -176,6 +176,16 @@ class InternetConnection {
   /// The handle for the timer used for periodic status checks.
   Timer? _timerHandle;
 
+  /// A counter that goes up by 1 every time a listener cancels its
+  /// subscription (see [_handleStatusChangeCancel]).
+  ///
+  /// [_maybeEmitStatusUpdate] reads this value before it starts checking the
+  /// connection, then compares it again after the check finishes. If the
+  /// numbers don't match, a cancel (and possibly a resubscribe) happened
+  /// while the check was still running, so that check's result is thrown
+  /// away instead of being sent to whoever is listening now.
+  int _subscriptionVersion = 0;
+
   /// Checks if the [Uri] specified in [option] is reachable.
   ///
   /// Returns a [Future] that completes with an [InternetCheckResult] indicating
@@ -269,12 +279,25 @@ class InternetConnection {
 
     if (!_statusController.hasListener) return;
 
+    final subscriptionVersion = _subscriptionVersion;
+
     final currentStatus = await internetStatus;
 
-    if (_lastStatus != currentStatus && _statusController.hasListener) {
+    // If a listener cancelled (and maybe a new one subscribed) while the
+    // check above was running, this result belongs to the old listener and
+    // must not be sent to whoever is listening now.
+    final isStale = _subscriptionVersion != subscriptionVersion;
+
+    if (!isStale &&
+        _lastStatus != currentStatus &&
+        _statusController.hasListener) {
       _lastStatus = currentStatus;
       _statusController.add(currentStatus);
     }
+
+    // A listener may have cancelled while the check above was running. Don't
+    // start a new timer in that case — there's nobody left to notify.
+    if (!_statusController.hasListener) return;
 
     _timerHandle = Timer(_checkInterval, _maybeEmitStatusUpdate);
   }
@@ -285,6 +308,7 @@ class InternetConnection {
   Future<void> _handleStatusChangeCancel() async {
     await _triggerSubscription?.cancel();
     _triggerSubscription = null;
+    _subscriptionVersion++;
     _timerHandle?.cancel();
     _timerHandle = null;
     _lastStatus = null;
