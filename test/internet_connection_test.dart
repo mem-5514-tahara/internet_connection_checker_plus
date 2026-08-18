@@ -723,6 +723,64 @@ void main() {
           expect(gap, greaterThan(100));
         }
       });
+
+      test(
+          'setIntervalAndResetTimer during an in-flight failing check does '
+          'not corrupt the backoff reset', () async {
+        // Use a gate to keep the 3rd check suspended while we call
+        // setIntervalAndResetTimer, then release it to verify the reset it
+        // applied survives instead of being silently overwritten once that
+        // stale check finally resumes.
+        final checkGate = Completer<void>();
+        var checkCount = 0;
+        final option =
+            InternetCheckOption(uri: Uri.parse('https://example.com'));
+
+        final checker = InternetConnection.createInstance(
+          // Long enough that it can't fire during this test on its own —
+          // any check we see must come from the in-flight one resuming.
+          checkInterval: const Duration(seconds: 10),
+          useDefaultOptions: false,
+          customCheckOptions: [option],
+          backoffOptions: ExponentialBackoffOptions(
+            initialDelay: const Duration(milliseconds: 50),
+            maxDelay: const Duration(milliseconds: 800),
+            multiplier: 2.0,
+          ),
+          customConnectivityCheck: (opt) async {
+            checkCount++;
+            if (checkCount == 3) await checkGate.future; // hold check 3 open
+            return InternetCheckResult(option: opt, isSuccess: false);
+          },
+        );
+        addTearDown(checker.dispose);
+
+        final sub = checker.onStatusChange.listen((_) {});
+
+        // Let backoff grow through check 1 (50ms) and check 2 (100ms), then
+        // check 3 starts and gets held.
+        await Future.delayed(const Duration(milliseconds: 200));
+        expect(checkCount, 3);
+
+        // Reset while check 3 is still in-flight. This should make the next
+        // failure use the fresh initial delay (50ms) again.
+        checker.setIntervalAndResetTimer(const Duration(seconds: 10));
+        expect(checker.currentBackoffDelay, const Duration(milliseconds: 50));
+
+        // Release the stale check.
+        checkGate.complete();
+        await Future.delayed(const Duration(milliseconds: 300));
+        await sub.cancel();
+
+        // Without a guard, check 3 resuming would treat the reset as its own
+        // first-failure, consume it, and reschedule — so the *next* check
+        // would incorrectly see the reset as already used and grow the
+        // delay to 100ms instead of starting over at 50ms. It would also
+        // fire that extra check well within this 300ms window (the new
+        // 10-second interval could not have fired on its own).
+        expect(checkCount, 3);
+        expect(checker.currentBackoffDelay, const Duration(milliseconds: 50));
+      });
     });
   });
 }

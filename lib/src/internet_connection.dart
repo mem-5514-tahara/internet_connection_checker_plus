@@ -208,6 +208,18 @@ class InternetConnection {
   /// The handle for the timer used for periodic status checks.
   Timer? _timerHandle;
 
+  /// A counter that goes up by 1 every time something reschedules the
+  /// polling timer directly, i.e. [setIntervalAndResetTimer] or a listener
+  /// cancelling (see [_handleStatusChangeCancel]).
+  ///
+  /// [_maybeEmitStatusUpdate] reads this value before it starts checking the
+  /// connection, then compares it again after the check finishes. If the
+  /// numbers don't match, someone else already changed the backoff state and
+  /// scheduled its own timer while the check was still running, so this (now
+  /// outdated) run must not touch [_currentBackoffDelay]/[_backoffNeedsReset]
+  /// or schedule another timer on top of it.
+  int _timerVersion = 0;
+
   /// Checks if the [Uri] specified in [option] is reachable.
   ///
   /// Returns a [Future] that completes with an [InternetCheckResult] indicating
@@ -244,6 +256,7 @@ class InternetConnection {
       _currentBackoffDelay = backoffOptions!.resolveInitialDelay(duration);
       _backoffNeedsReset = true;
     }
+    _timerVersion++;
     _timerHandle?.cancel();
     _timerHandle = Timer(_checkInterval, _maybeEmitStatusUpdate);
   }
@@ -313,6 +326,8 @@ class InternetConnection {
 
     if (!_statusController.hasListener) return;
 
+    final timerVersion = _timerVersion;
+
     // Snapshot before possible mutation below — needed to detect first-failure
     // vs. ongoing-failure for backoff calculation.
     final previousStatus = _lastStatus;
@@ -323,6 +338,12 @@ class InternetConnection {
       _lastStatus = currentStatus;
       _statusController.add(currentStatus);
     }
+
+    // If setIntervalAndResetTimer ran (or a listener cancelled) while the
+    // check above was running, it already updated the backoff state and
+    // scheduled its own timer. Touching that state or scheduling another
+    // timer here would silently undo what it just set up.
+    if (_timerVersion != timerVersion) return;
 
     Duration nextDelay;
     final options = backoffOptions;
@@ -356,6 +377,7 @@ class InternetConnection {
   Future<void> _handleStatusChangeCancel() async {
     await _triggerSubscription?.cancel();
     _triggerSubscription = null;
+    _timerVersion++;
     _timerHandle?.cancel();
     _timerHandle = null;
     _lastStatus = null;
