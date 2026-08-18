@@ -208,27 +208,6 @@ class InternetConnection {
   /// The handle for the timer used for periodic status checks.
   Timer? _timerHandle;
 
-  /// Monotonically increasing counter bumped whenever an in-flight
-  /// [_maybeEmitStatusUpdate] must be invalidated: on [setIntervalAndResetTimer]
-  /// and on [_handleStatusChangeCancel].
-  ///
-  /// Each [_maybeEmitStatusUpdate] invocation captures this value on entry.
-  /// Before mutating shared backoff state or scheduling the next timer it
-  /// checks that the value has not changed.  A mismatch means this invocation
-  /// is stale — another caller already rescheduled and owns the next cycle.
-  int _generation = 0;
-
-  /// Monotonically increasing counter bumped only on [_handleStatusChangeCancel].
-  ///
-  /// Captured before the [await internetStatus] gap and compared before
-  /// emitting.  A mismatch means a cancel+resubscribe cycle happened while
-  /// the check was in-flight: the result belongs to the old subscription context
-  /// and must not be emitted to the new subscriber.
-  ///
-  /// Unlike [_generation], this is NOT bumped by [setIntervalAndResetTimer],
-  /// because interval changes do not affect which subscriber owns the result.
-  int _cancelGeneration = 0;
-
   /// Checks if the [Uri] specified in [option] is reachable.
   ///
   /// Returns a [Future] that completes with an [InternetCheckResult] indicating
@@ -265,7 +244,6 @@ class InternetConnection {
       _currentBackoffDelay = backoffOptions!.resolveInitialDelay(duration);
       _backoffNeedsReset = true;
     }
-    _generation++;
     _timerHandle?.cancel();
     _timerHandle = Timer(_checkInterval, _maybeEmitStatusUpdate);
   }
@@ -332,8 +310,6 @@ class InternetConnection {
   /// Updates the status and emits it if there are listeners.
   Future<void> _maybeEmitStatusUpdate() async {
     _timerHandle?.cancel();
-    final generation = _generation;
-    final cancelGeneration = _cancelGeneration;
 
     if (!_statusController.hasListener) return;
 
@@ -343,23 +319,10 @@ class InternetConnection {
 
     final currentStatus = await internetStatus;
 
-    // Only emit if this result still belongs to the current subscription
-    // context.  A cancel+resubscribe while we were awaiting bumps
-    // _cancelGeneration; the new subscriber owns its own fresh check.
-    if (_cancelGeneration == cancelGeneration &&
-        _lastStatus != currentStatus &&
-        _statusController.hasListener) {
+    if (_lastStatus != currentStatus && _statusController.hasListener) {
       _lastStatus = currentStatus;
       _statusController.add(currentStatus);
     }
-
-    if (!_statusController.hasListener) return;
-    // Guard before mutating shared backoff state: a setIntervalAndResetTimer
-    // call that arrived while we were awaiting internetStatus has already
-    // bumped _generation and scheduled its own timer.  Mutating
-    // _currentBackoffDelay / _backoffNeedsReset here would silently overwrite
-    // the reset that setIntervalAndResetTimer applied.
-    if (_generation != generation) return;
 
     Duration nextDelay;
     final options = backoffOptions;
@@ -393,8 +356,6 @@ class InternetConnection {
   Future<void> _handleStatusChangeCancel() async {
     await _triggerSubscription?.cancel();
     _triggerSubscription = null;
-    _cancelGeneration++;
-    _generation++;
     _timerHandle?.cancel();
     _timerHandle = null;
     _lastStatus = null;

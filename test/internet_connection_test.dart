@@ -723,53 +723,6 @@ void main() {
           expect(gap, greaterThan(100));
         }
       });
-
-      test(
-          'cancelled in-flight check does not emit stale result to new subscriber',
-          () async {
-        // Use a gate to keep the first check suspended while we cancel and
-        // resubscribe, then release it to verify the stale result is dropped.
-        final checkGate = Completer<void>();
-        var checkCount = 0;
-        final option =
-            InternetCheckOption(uri: Uri.parse('https://example.com'));
-
-        final checker = InternetConnection.createInstance(
-          checkInterval: const Duration(seconds: 10),
-          useDefaultOptions: false,
-          customCheckOptions: [option],
-          backoffOptions: ExponentialBackoffOptions(),
-          customConnectivityCheck: (opt) async {
-            final mine = ++checkCount;
-            if (mine == 1) await checkGate.future; // stale check is paused
-            // check 1 → connected (stale), check 2 → disconnected (fresh)
-            return InternetCheckResult(option: opt, isSuccess: mine == 1);
-          },
-        );
-
-        // Subscribe — starts the first (paused) check.
-        final sub1 = checker.onStatusChange.listen((_) {});
-        await Future.microtask(() {});
-
-        // Cancel before the first check resolves.
-        await sub1.cancel();
-
-        // Resubscribe — starts the second (immediate, disconnected) check.
-        final received = <InternetStatus>[];
-        final sub2 = checker.onStatusChange.listen(received.add);
-
-        // Let the second check complete.
-        await Future.delayed(const Duration(milliseconds: 50));
-
-        // Release the stale first check.
-        checkGate.complete();
-        await Future.delayed(const Duration(milliseconds: 50));
-
-        // Only the fresh (disconnected) result should have been emitted.
-        expect(received, [InternetStatus.disconnected]);
-
-        await sub2.cancel();
-      });
     });
   });
 }
