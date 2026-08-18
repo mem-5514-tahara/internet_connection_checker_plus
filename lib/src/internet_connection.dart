@@ -279,25 +279,18 @@ class InternetConnection {
 
     if (!_statusController.hasListener) return;
 
-    final subscriptionVersion = _subscriptionVersion;
+    final previousSubVersion = _subscriptionVersion;
 
     final currentStatus = await internetStatus;
 
-    // If a listener cancelled (and maybe a new one subscribed) while the
-    // check above was running, this result belongs to the old listener and
-    // must not be sent to whoever is listening now.
-    final isStale = _subscriptionVersion != subscriptionVersion;
+    if (!_statusController.hasListener) return;
 
-    if (!isStale &&
-        _lastStatus != currentStatus &&
-        _statusController.hasListener) {
+    final isStale = _subscriptionVersion != previousSubVersion;
+
+    if (!isStale && _lastStatus != currentStatus) {
       _lastStatus = currentStatus;
       _statusController.add(currentStatus);
     }
-
-    // A listener may have cancelled while the check above was running. Don't
-    // start a new timer in that case — there's nobody left to notify.
-    if (!_statusController.hasListener) return;
 
     _timerHandle = Timer(_checkInterval, _maybeEmitStatusUpdate);
   }
