@@ -283,11 +283,12 @@ class InternetConnection {
 
     final currentStatus = await internetStatus;
 
-    if (!_statusController.hasListener) return;
+    if (!_statusController.hasListener ||
+        _subscriptionVersion != previousSubVersion) {
+      return;
+    }
 
-    final isStale = _subscriptionVersion != previousSubVersion;
-
-    if (!isStale && _lastStatus != currentStatus) {
+    if (_lastStatus != currentStatus) {
       _lastStatus = currentStatus;
       _statusController.add(currentStatus);
     }
@@ -299,12 +300,12 @@ class InternetConnection {
   ///
   /// Cancels the timer and resets the last status.
   Future<void> _handleStatusChangeCancel() async {
-    await _triggerSubscription?.cancel();
-    _triggerSubscription = null;
     _subscriptionVersion++;
     _timerHandle?.cancel();
     _timerHandle = null;
     _lastStatus = null;
+    await _triggerSubscription?.cancel();
+    _triggerSubscription = null;
   }
 
   /// The result of the last attempt to check the internet status.
