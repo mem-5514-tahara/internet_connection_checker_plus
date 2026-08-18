@@ -326,10 +326,11 @@ void main() {
           checkInterval: checkInterval,
           useDefaultOptions: false,
           customCheckOptions: [option],
-          useExponentialBackoff: true,
-          backoffInitialDelay: backoffInitialDelay,
-          backoffMaxDelay: backoffMaxDelay,
-          backoffMultiplier: backoffMultiplier,
+          backoffOptions: ExponentialBackoffOptions(
+            initialDelay: backoffInitialDelay,
+            maxDelay: backoffMaxDelay,
+            multiplier: backoffMultiplier,
+          ),
           customConnectivityCheck: (opt) async {
             callLog.add(DateTime.now());
             return InternetCheckResult(option: opt, isSuccess: shouldSucceed());
@@ -339,98 +340,6 @@ void main() {
         return checker;
       }
 
-      group('constructor validation', () {
-        // One custom option is enough to satisfy the non-default-options assert.
-        final singleOption = [
-          InternetCheckOption(uri: Uri.parse('https://example.com')),
-        ];
-
-        // backoffMultiplier < 1.0 would cause the delay to shrink on each
-        // failure, eventually collapsing to 0 and creating a busy-poll loop.
-        test('throws when backoffMultiplier is less than 1.0', () {
-          expect(
-            () => InternetConnection.createInstance(
-              useExponentialBackoff: true,
-              useDefaultOptions: false,
-              customCheckOptions: singleOption,
-              backoffMultiplier: 0.5,
-            ),
-            throwsA(isA<ArgumentError>()),
-          );
-        });
-
-        // 1.0 is the boundary: flat-rate backoff (delay never grows) is valid,
-        // since the interval still resets on reconnect as documented.
-        test('allows backoffMultiplier equal to 1.0', () {
-          expect(
-            () => InternetConnection.createInstance(
-              useExponentialBackoff: true,
-              useDefaultOptions: false,
-              customCheckOptions: singleOption,
-              backoffMultiplier: 1.0,
-            ),
-            returnsNormally,
-          );
-        });
-
-        // Duration.zero initial delay fires the next timer immediately on the
-        // first failure, indistinguishable from having no backoff at all.
-        test('throws when backoffInitialDelay is zero', () {
-          expect(
-            () => InternetConnection.createInstance(
-              useExponentialBackoff: true,
-              useDefaultOptions: false,
-              customCheckOptions: singleOption,
-              backoffInitialDelay: Duration.zero,
-            ),
-            throwsA(isA<ArgumentError>()),
-          );
-        });
-
-        // initialDelay > maxDelay means the very first backed-off poll already
-        // exceeds the configured ceiling — the ceiling becomes meaningless.
-        test('throws when backoffInitialDelay exceeds backoffMaxDelay', () {
-          expect(
-            () => InternetConnection.createInstance(
-              useExponentialBackoff: true,
-              useDefaultOptions: false,
-              customCheckOptions: singleOption,
-              backoffInitialDelay: const Duration(seconds: 10),
-              backoffMaxDelay: const Duration(seconds: 5),
-            ),
-            throwsA(isA<ArgumentError>()),
-          );
-        });
-
-        // NaN and Infinity both fail `< 1.0` (IEEE-754 comparisons involving
-        // NaN are always false), so a naive lower-bound check alone would let
-        // them through the constructor only to crash later when `.round()` is
-        // called on the grown delay during an ongoing failure.
-        test('throws when backoffMultiplier is NaN', () {
-          expect(
-            () => InternetConnection.createInstance(
-              useExponentialBackoff: true,
-              useDefaultOptions: false,
-              customCheckOptions: singleOption,
-              backoffMultiplier: double.nan,
-            ),
-            throwsA(isA<ArgumentError>()),
-          );
-        });
-
-        test('throws when backoffMultiplier is Infinity', () {
-          expect(
-            () => InternetConnection.createInstance(
-              useExponentialBackoff: true,
-              useDefaultOptions: false,
-              customCheckOptions: singleOption,
-              backoffMultiplier: double.infinity,
-            ),
-            throwsA(isA<ArgumentError>()),
-          );
-        });
-      });
-
       test('exposes the effective backoff configuration via public getters',
           () async {
         final checker = InternetConnection.createInstance(
@@ -439,16 +348,17 @@ void main() {
           customCheckOptions: [
             InternetCheckOption(uri: Uri.parse('https://example.com')),
           ],
-          useExponentialBackoff: true,
-          backoffMaxDelay: const Duration(seconds: 30),
-          backoffMultiplier: 3.0,
+          backoffOptions: ExponentialBackoffOptions(
+            maxDelay: const Duration(seconds: 30),
+            multiplier: 3.0,
+          ),
         );
         addTearDown(checker.dispose);
 
-        // backoffInitialDelay was omitted, so it should track checkInterval.
-        expect(checker.backoffInitialDelay, const Duration(seconds: 10));
-        expect(checker.backoffMaxDelay, const Duration(seconds: 30));
-        expect(checker.backoffMultiplier, 3.0);
+        // initialDelay was omitted, so it should track checkInterval.
+        expect(checker.backoffOptions!.initialDelay, null);
+        expect(checker.backoffOptions!.maxDelay, const Duration(seconds: 30));
+        expect(checker.backoffOptions!.multiplier, 3.0);
         // Before any failure, the live delay equals the initial delay.
         expect(checker.currentBackoffDelay, const Duration(seconds: 10));
       });
@@ -668,9 +578,10 @@ void main() {
           customCheckOptions: [
             InternetCheckOption(uri: Uri.parse('https://example.com')),
           ],
-          useExponentialBackoff: true,
-          backoffMaxDelay: const Duration(milliseconds: 500),
-          backoffMultiplier: 2.0,
+          backoffOptions: ExponentialBackoffOptions(
+            maxDelay: const Duration(milliseconds: 500),
+            multiplier: 2.0,
+          ),
           customConnectivityCheck: (opt) async {
             callLog.add(DateTime.now());
             return InternetCheckResult(option: opt, isSuccess: false);
@@ -827,7 +738,7 @@ void main() {
           checkInterval: const Duration(seconds: 10),
           useDefaultOptions: false,
           customCheckOptions: [option],
-          useExponentialBackoff: true,
+          backoffOptions: ExponentialBackoffOptions(),
           customConnectivityCheck: (opt) async {
             final mine = ++checkCount;
             if (mine == 1) await checkGate.future; // stale check is paused

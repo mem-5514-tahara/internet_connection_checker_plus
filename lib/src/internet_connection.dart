@@ -59,7 +59,7 @@ typedef ConnectivityCheckCallback = Future<InternetCheckResult> Function(
 /// will prevent memory leaks and free up resources.
 ///
 /// ```dart
-/// await listener.cancel();
+/// listener.cancel();
 /// ```
 class InternetConnection {
   /// Returns the singleton instance of [InternetConnection].
@@ -77,33 +77,21 @@ class InternetConnection {
   /// used along with any [customCheckOptions] provided.
   ///
   /// - If [useDefaultOptions] is `false`, you must provide a non-empty
-  /// [customCheckOptions] list, otherwise an [ArgumentError] is thrown.
+  /// [customCheckOptions] list.
   ///
   /// The [customConnectivityCheck] allows you to provide a custom method for
   /// checking endpoint reachability. If provided, it will be used for all
   /// connectivity checks instead of the default HTTP HEAD request
   /// implementation.
   ///
-  /// The [useExponentialBackoff] flag enables exponential backoff for the
-  /// polling interval used by [onStatusChange]. Defaults to `false`, which
-  /// preserves the existing fixed-[checkInterval] polling behaviour exactly.
-  /// When `true`:
-  /// - [backoffInitialDelay] is the delay applied after the first detected
-  ///   failure. If omitted, it defaults to (and tracks) [checkInterval],
-  ///   including through [setIntervalAndResetTimer] calls that don't specify
-  ///   an explicit [backoffInitialDelay].
-  /// - [backoffMaxDelay] caps how large the delay may grow. Defaults to 60
-  ///   seconds.
-  /// - [backoffMultiplier] is the factor applied to the delay on each
-  ///   consecutive failure. Defaults to `2.0`.
-  /// - The delay resets to [checkInterval] as soon as the connection is
-  ///   restored, and resets to [backoffInitialDelay] whenever
-  ///   [setIntervalAndResetTimer] is called or the last listener cancels.
-  ///
-  /// An [ArgumentError] is thrown if [useExponentialBackoff] is `true` and
-  /// [backoffMultiplier] is not a finite number `>= 1.0`, or if
-  /// [backoffMaxDelay] or the effective [backoffInitialDelay] is not a
-  /// positive [Duration] no greater than [backoffMaxDelay].
+  /// The [backoffOptions] enables exponential backoff for the polling
+  /// interval used by [onStatusChange]. Defaults to `null`, which preserves
+  /// the existing fixed-[checkInterval] polling behaviour exactly. When
+  /// provided, the delay grows on consecutive failures (as configured by
+  /// [ExponentialBackoffOptions]), resets to [checkInterval] as soon as the
+  /// connection is restored, and resets to the configured initial delay
+  /// whenever [setIntervalAndResetTimer] is called or the last listener
+  /// cancels.
   ///
   /// Make sure to call [dispose] when this instance is no longer needed to free
   /// up resources.
@@ -114,54 +102,17 @@ class InternetConnection {
     this.enableStrictCheck = false,
     this.customConnectivityCheck,
     this.triggerStream,
-    this.useExponentialBackoff = false,
-    Duration? backoffInitialDelay,
-    Duration backoffMaxDelay = const Duration(seconds: 60),
-    double backoffMultiplier = 2.0,
+    this.backoffOptions,
   })  : _checkInterval = checkInterval ?? _defaultCheckInterval,
-        _backoffInitialDelayExplicit = backoffInitialDelay != null,
-        _backoffInitialDelay =
-            _resolveInitialDelay(backoffInitialDelay, checkInterval),
-        _backoffMaxDelay = backoffMaxDelay,
-        _backoffMultiplier = backoffMultiplier,
-        _currentBackoffDelay =
-            _resolveInitialDelay(backoffInitialDelay, checkInterval) {
-    if (!useDefaultOptions && customCheckOptions?.isNotEmpty != true) {
-      throw ArgumentError(
-        'You must provide a list of options if you are not using the '
-        'default ones.',
-      );
-    }
-    if (useExponentialBackoff) {
-      if (!backoffMultiplier.isFinite || backoffMultiplier < 1.0) {
-        throw ArgumentError.value(
-          backoffMultiplier,
-          'backoffMultiplier',
-          'Must be a finite number >= 1.0 to prevent shrinking or invalid '
-              'intervals.',
-        );
-      }
-      if (backoffMaxDelay <= Duration.zero) {
-        throw ArgumentError.value(
-          backoffMaxDelay,
-          'backoffMaxDelay',
-          'Must be greater than zero.',
-        );
-      }
-      if (_backoffInitialDelay <= Duration.zero) {
-        throw ArgumentError.value(
-          _backoffInitialDelay,
-          'backoffInitialDelay',
-          'backoffInitialDelay (or checkInterval if implicitly used) must be greater than zero.',
-        );
-      }
-      if (_backoffInitialDelay > _backoffMaxDelay) {
-        throw ArgumentError(
-          'backoffInitialDelay (or checkInterval if implicitly used) '
-          'must be less than or equal to backoffMaxDelay.',
-        );
-      }
-    }
+        _currentBackoffDelay = backoffOptions?.resolveInitialDelay(
+              checkInterval ?? _defaultCheckInterval,
+            ) ??
+            Duration.zero,
+        assert(
+          useDefaultOptions || customCheckOptions?.isNotEmpty == true,
+          'You must provide a list of options if you are not using the '
+          'default ones.',
+        ) {
     _internetCheckOptions = List.unmodifiable([
       if (useDefaultOptions) ..._defaultCheckOptions,
       if (customCheckOptions != null) ...customCheckOptions,
@@ -176,12 +127,6 @@ class InternetConnection {
 
   /// The default check interval duration.
   static const _defaultCheckInterval = Duration(seconds: 10);
-
-  static Duration _resolveInitialDelay(
-    Duration? backoffInitialDelay,
-    Duration? checkInterval,
-  ) =>
-      backoffInitialDelay ?? checkInterval ?? _defaultCheckInterval;
 
   /// The default list of [Uri]s used for checking internet reachability.
   static final _defaultCheckOptions = List<InternetCheckOption>.unmodifiable([
@@ -239,42 +184,22 @@ class InternetConnection {
   /// whenever it emits an event.
   final Stream? triggerStream;
 
-  /// Whether exponential backoff is enabled for the polling interval.
+  /// The exponential backoff configuration for the polling interval used by
+  /// [onStatusChange].
   ///
-  /// When `true`, the polling interval grows on consecutive failures and resets
-  /// to [checkInterval] when the connection is restored.
-  ///
-  /// Defaults to `false`.
-  final bool useExponentialBackoff;
-
-  /// Whether [_backoffInitialDelay] was explicitly provided by the caller.
-  ///
-  /// When `false`, [_backoffInitialDelay] tracks [_checkInterval] so that
-  /// a [setIntervalAndResetTimer] call keeps both values in sync.
-  final bool _backoffInitialDelayExplicit;
-
-  /// The initial delay used on the first failure when backoff is enabled.
-  ///
-  /// Defaults to [checkInterval]. Updated by [setIntervalAndResetTimer] when
-  /// no explicit value was provided at construction time.
-  Duration _backoffInitialDelay;
-
-  /// The upper bound on the backoff delay.
-  ///
-  /// Defaults to 60 seconds.
-  final Duration _backoffMaxDelay;
-
-  /// The multiplicative factor applied to the delay on each consecutive failure.
-  ///
-  /// Defaults to 2.0.
-  final double _backoffMultiplier;
+  /// When `null` (the default), the polling interval stays fixed at
+  /// [checkInterval]. When provided, the delay grows on consecutive failures
+  /// and resets to [checkInterval] when the connection is restored.
+  final ExponentialBackoffOptions? backoffOptions;
 
   /// Whether the backoff state was forcefully reset by an interval change.
   bool _backoffNeedsReset = false;
 
-  /// The live backoff delay, updated each polling cycle when backoff is enabled.
+  /// The live backoff delay, updated each polling cycle when [backoffOptions]
+  /// is set.
   ///
-  /// Resets to [_backoffInitialDelay] on reconnect or subscription cancel.
+  /// Resets to the configured initial delay on reconnect or subscription
+  /// cancel.
   Duration _currentBackoffDelay;
 
   /// The last known internet connection status result.
@@ -336,11 +261,8 @@ class InternetConnection {
   /// resets the connection checking timer.
   void setIntervalAndResetTimer(Duration duration) {
     _checkInterval = duration;
-    if (useExponentialBackoff) {
-      // Keep _backoffInitialDelay in sync with the new checkInterval when the
-      // caller never provided an explicit backoffInitialDelay.
-      if (!_backoffInitialDelayExplicit) _backoffInitialDelay = duration;
-      _currentBackoffDelay = _backoffInitialDelay;
+    if (backoffOptions != null) {
+      _currentBackoffDelay = backoffOptions!.resolveInitialDelay(duration);
       _backoffNeedsReset = true;
     }
     _generation++;
@@ -351,27 +273,12 @@ class InternetConnection {
   /// Returns the current duration between connection checks.
   Duration get checkInterval => _checkInterval;
 
-  /// Returns the delay applied after the first detected failure when
-  /// [useExponentialBackoff] is enabled.
-  ///
-  /// If no explicit value was provided at construction time, this tracks
-  /// [checkInterval], including through [setIntervalAndResetTimer] calls.
-  Duration get backoffInitialDelay => _backoffInitialDelay;
-
-  /// Returns the configured upper bound on the backoff delay when
-  /// [useExponentialBackoff] is enabled.
-  Duration get backoffMaxDelay => _backoffMaxDelay;
-
-  /// Returns the configured multiplicative factor applied to the delay on
-  /// each consecutive failure when [useExponentialBackoff] is enabled.
-  double get backoffMultiplier => _backoffMultiplier;
-
   /// Returns the delay that will be used before the next poll when
-  /// [useExponentialBackoff] is enabled.
+  /// [backoffOptions] is set.
   ///
-  /// Useful for surfacing "retrying in Xs" style UI. Resets to
-  /// [backoffInitialDelay] on reconnect, on [setIntervalAndResetTimer], and
-  /// when the last listener cancels.
+  /// Exposed so apps can surface "retrying in Xs" style UI. Resets to the
+  /// configured initial delay on reconnect, on [setIntervalAndResetTimer],
+  /// and when the last listener cancels.
   Duration get currentBackoffDelay => _currentBackoffDelay;
 
   /// Checks if there is internet access by verifying connectivity to the
@@ -455,32 +362,26 @@ class InternetConnection {
     if (_generation != generation) return;
 
     Duration nextDelay;
-    if (useExponentialBackoff) {
-      if (currentStatus == InternetStatus.connected) {
-        _currentBackoffDelay = _backoffInitialDelay;
-        nextDelay = _checkInterval;
-      } else if (previousStatus != InternetStatus.disconnected ||
-          _backoffNeedsReset) {
-        // First failure: previousStatus is either null (first ever poll) or
-        // connected — both mean we have not yet been in a backoff streak.
-        // Also, if _backoffNeedsReset is true, we treat this as a first failure to
-        // reset the backoff delay, even if the previous status was already disconnected.
-        _backoffNeedsReset = false;
-        _currentBackoffDelay = _backoffInitialDelay > _backoffMaxDelay
-            ? _backoffMaxDelay
-            : _backoffInitialDelay;
-        nextDelay = _currentBackoffDelay;
-      } else {
-        // Ongoing failure: grow the delay.
-        final ms =
-            (_currentBackoffDelay.inMilliseconds * _backoffMultiplier).round();
-        _currentBackoffDelay = Duration(
-          milliseconds: ms.clamp(0, _backoffMaxDelay.inMilliseconds).toInt(),
-        );
-        nextDelay = _currentBackoffDelay;
-      }
-    } else {
+    final options = backoffOptions;
+    if (options == null) {
       nextDelay = _checkInterval;
+    } else if (currentStatus == InternetStatus.connected) {
+      _currentBackoffDelay = options.resolveInitialDelay(_checkInterval);
+      nextDelay = _checkInterval;
+    } else {
+      // A failure is either the first in a new streak — previousStatus is
+      // null (first ever poll) or connected, or _backoffNeedsReset was set
+      // by setIntervalAndResetTimer/a new subscription — or an ongoing
+      // streak, in which case the delay keeps growing.
+      final isFirstFailure =
+          previousStatus != InternetStatus.disconnected || _backoffNeedsReset;
+      _backoffNeedsReset = false;
+      _currentBackoffDelay = options.nextDelay(
+        current: _currentBackoffDelay,
+        isFirstFailure: isFirstFailure,
+        checkInterval: _checkInterval,
+      );
+      nextDelay = _currentBackoffDelay;
     }
 
     _timerHandle = Timer(nextDelay, _maybeEmitStatusUpdate);
@@ -498,7 +399,10 @@ class InternetConnection {
     _timerHandle = null;
     _lastStatus = null;
     _backoffNeedsReset = false;
-    if (useExponentialBackoff) _currentBackoffDelay = _backoffInitialDelay;
+    if (backoffOptions != null) {
+      _currentBackoffDelay =
+          backoffOptions!.resolveInitialDelay(_checkInterval);
+    }
   }
 
   /// The result of the last attempt to check the internet status.
