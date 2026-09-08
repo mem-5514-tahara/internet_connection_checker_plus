@@ -276,6 +276,7 @@ class InternetConnection {
   /// Updates the status and emits it if there are listeners.
   Future<void> _maybeEmitStatusUpdate() async {
     _timerHandle?.cancel();
+    _timerHandle = null;
 
     if (!_statusController.hasListener) return;
 
@@ -292,6 +293,12 @@ class InternetConnection {
       _lastStatus = currentStatus;
       _statusController.add(currentStatus);
     }
+
+    // [setIntervalAndResetTimer] already scheduled the next poll while the
+    // check above was running. Overwriting [_timerHandle] here would leave
+    // that timer running with nothing tracking it, so it could no longer be
+    // cancelled and would keep firing checks of its own.
+    if (_timerHandle != null) return;
 
     _timerHandle = Timer(_checkInterval, _maybeEmitStatusUpdate);
   }
