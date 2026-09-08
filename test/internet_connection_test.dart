@@ -282,13 +282,13 @@ void main() {
         // resubscribe, then release it to verify the stale result is dropped.
         final checkGate = Completer<void>();
         var checkCount = 0;
-        final option =
-            InternetCheckOption(uri: Uri.parse('https://example.com'));
 
         final checker = InternetConnection.createInstance(
           checkInterval: const Duration(seconds: 10),
           useDefaultOptions: false,
-          customCheckOptions: [option],
+          customCheckOptions: [
+            InternetCheckOption(uri: Uri.parse('https://example.com')),
+          ],
           customConnectivityCheck: (opt) async {
             final mine = ++checkCount;
             if (mine == 1) await checkGate.future; // stale check is paused
@@ -326,13 +326,13 @@ void main() {
           () async {
         final checkGate = Completer<void>();
         var checkCount = 0;
-        final option =
-            InternetCheckOption(uri: Uri.parse('https://example.com'));
 
         final checker = InternetConnection.createInstance(
           checkInterval: const Duration(milliseconds: 50),
           useDefaultOptions: false,
-          customCheckOptions: [option],
+          customCheckOptions: [
+            InternetCheckOption(uri: Uri.parse('https://example.com')),
+          ],
           customConnectivityCheck: (opt) async {
             checkCount++;
             if (checkCount == 1) await checkGate.future;
